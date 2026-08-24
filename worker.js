@@ -1,6 +1,4 @@
-// ============================================
-// WORKER.JS - TEMP EMAIL SERVICE (FULL VERSION)
-// ============================================
+
 
 const DOMAINS = ["gmaiil.xinquins.de5.net"];
 const MAX_EMAIL_AGE = 3600000; // 1 jam (dalam milidetik)
