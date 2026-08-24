@@ -7,5 +7,6 @@ binding = "DB"
 database_name = "temp-email-db"
 database_id = "00fcaa3b-7585-4c50-83d1-be7d368b9f0d"
 
-[vars]
-DOMAINS = "gmaiil.xinquins.de5.net"
+[[routes]]
+pattern = "gmaiil.xinquins.de5.net"
+custom_domain = true
