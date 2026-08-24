@@ -1,5 +1,4 @@
-
-import PostalMime from 'postal-mime';
+// HAPUS BARIS IMPORT PostalMime, TIDAK PERLU LIBRARY
 
 const DOMAINS = ["gmaiil.xinquins.de5.net"];
 const MAX_EMAIL_AGE = 3600000; // 1 jam (dalam milidetik)
@@ -7,24 +6,33 @@ const MAX_EMAILS_PER_IP = 50; // Maksimal email per IP
 
 export default {
     // ==========================================
-    // BAGIAN BARU: HANDLE EMAIL MASUK (WAJIB ADA)
+    // HANDLE EMAIL MASUK (TANPA LIBRARY)
     // ==========================================
     async email(message, env, ctx) {
         try {
-            // Parse email mentah
-            const rawEmail = new Response(message.raw);
-            const parser = new PostalMime();
-            const email = await parser.parse(await rawEmail.arrayBuffer());
+            // Baca raw email sebagai teks biasa
+            const rawEmail = await message.raw.text();
+            const to = message.to;
+            const from = message.from;
 
-            const to = email.to[0].address; // Alamat email kamu (contoh: john123@gmaiil...)
-            const from = email.from.address;
-            const subject = email.subject || '';
-            const content = email.html || email.text || '';
+            // Ekstrak Subject
+            let subject = '';
+            const subjectMatch = rawEmail.match(/Subject: (.*)/i);
+            if (subjectMatch) subject = subjectMatch[1].trim();
 
-            // Ekstrak kode verifikasi
-            const code = extractCode(content) || extractCode(subject);
+            // Ekstrak Body (ambil bagian setelah baris kosong ganda)
+            let body = '';
+            const bodyParts = rawEmail.split(/\r?\n\r?\n/);
+            if (bodyParts.length > 1) {
+                body = bodyParts.slice(1).join('\n');
+            }
 
-            // Simpan ke database D1 (pastikan binding DB kamu bernama 'DB')
+            const content = subject + '\n' + body;
+
+            // Cari kode verifikasi
+            const code = extractCode(content);
+
+            // Simpan ke database D1 (pastikan nama binding adalah 'DB')
             await env.DB.prepare(`
                 INSERT INTO emails (id, email, from_email, subject, content, code, created_at, read, used)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -47,7 +55,7 @@ export default {
     },
 
     // ==========================================
-    // BAGIAN LAMA: FETCH API (JANGAN DIHAPUS)
+    // FETCH API (TETAP SAMA)
     // ==========================================
     async fetch(request, env) {
         const url = new URL(request.url);
@@ -55,7 +63,6 @@ export default {
         const method = request.method;
         const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
-        // CORS Headers
         const headers = {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -63,15 +70,11 @@ export default {
             'Content-Type': 'application/json'
         };
 
-        // Handle CORS preflight
         if (method === 'OPTIONS') {
             return new Response(null, { headers });
         }
 
         try {
-            // ==========================================
-            // 1. TESTING ENDPOINT
-            // ==========================================
             if (path === '/' && method === 'GET') {
                 return new Response(JSON.stringify({
                     status: '🚀 Temp Email Worker Running!',
@@ -90,21 +93,13 @@ export default {
                 }), { headers });
             }
 
-            // ==========================================
-            // 2. API ENDPOINTS
-            // ==========================================
-
-            // ===== GET /api/domains =====
             if (path === '/api/domains' && method === 'GET') {
                 return new Response(JSON.stringify(DOMAINS), { headers });
             }
 
-            // ===== GET /api/generate (SUPPORT GET & POST) =====
             if (path === '/api/generate' && (method === 'GET' || method === 'POST')) {
-                // Cleanup old emails first
                 await cleanupOldEmails(env);
                 
-                // Check rate limit per IP
                 const emailCount = await countEmailsByIP(env, clientIP);
                 if (emailCount >= MAX_EMAILS_PER_IP) {
                     return new Response(JSON.stringify({
@@ -114,25 +109,16 @@ export default {
                     }), { status: 429, headers });
                 }
 
-                // Generate new email
                 const name = generateRandomName();
                 const domain = DOMAINS[0];
                 const email = `${name}@${domain}`;
                 const timestamp = Date.now();
                 const id = crypto.randomUUID();
                 
-                // Simpan ke D1
                 await env.DB.prepare(`
                     INSERT INTO emails (id, email, ip_address, created_at, status, used)
                     VALUES (?, ?, ?, ?, ?, ?)
-                `).bind(
-                    id,
-                    email,
-                    clientIP,
-                    timestamp,
-                    'pending',
-                    0
-                ).run();
+                `).bind(id, email, clientIP, timestamp, 'pending', 0).run();
 
                 return new Response(JSON.stringify({
                     success: true,
@@ -145,12 +131,10 @@ export default {
                 }), { headers });
             }
 
-            // ===== GET /api/emails =====
             if (path === '/api/emails' && method === 'GET') {
                 const limit = url.searchParams.get('limit') || 50;
                 const result = await env.DB.prepare(`
-                    SELECT id, email, created_at, status, used, 
-                           subject, from_email, code
+                    SELECT id, email, created_at, status, used, subject, from_email, code
                     FROM emails 
                     ORDER BY created_at DESC 
                     LIMIT ?
@@ -165,32 +149,21 @@ export default {
                 }), { headers });
             }
 
-            // ===== GET /api/email/:id =====
             if (path.startsWith('/api/email/') && method === 'GET') {
                 const id = path.replace('/api/email/', '');
-                const result = await env.DB.prepare(`
-                    SELECT * FROM emails WHERE id = ?
-                `).bind(id).first();
+                const result = await env.DB.prepare(`SELECT * FROM emails WHERE id = ?`).bind(id).first();
                 
                 if (result) {
-                    // Tandai sebagai sudah dibaca
-                    await env.DB.prepare(`
-                        UPDATE emails SET read = 1 WHERE id = ?
-                    `).bind(id).run();
-                    
+                    await env.DB.prepare(`UPDATE emails SET read = 1 WHERE id = ?`).bind(id).run();
                     return new Response(JSON.stringify({
                         ...result,
                         created_at: new Date(result.created_at).toISOString()
                     }), { headers });
                 } else {
-                    return new Response(JSON.stringify({
-                        error: 'Email not found',
-                        id: id
-                    }), { status: 404, headers });
+                    return new Response(JSON.stringify({ error: 'Email not found', id: id }), { status: 404, headers });
                 }
             }
 
-            // ===== GET /api/code/:email =====
             if (path.startsWith('/api/code/') && method === 'GET') {
                 const email = decodeURIComponent(path.replace('/api/code/', ''));
                 const result = await env.DB.prepare(`
@@ -202,23 +175,13 @@ export default {
                 `).bind(email).first();
                 
                 if (result) {
-                    // Tandai email sebagai sudah digunakan untuk mendapatkan code
-                    await env.DB.prepare(`
-                        UPDATE emails SET used = 1 WHERE id = ?
-                    `).bind(result.id).run();
+                    await env.DB.prepare(`UPDATE emails SET used = 1 WHERE id = ?`).bind(result.id).run();
 
-                    // Ekstrak kode dari berbagai sumber
                     let code = result.code;
                     if (!code) {
-                        code = extractCode(result.subject || '') || 
-                               extractCode(result.content || '') || 
-                               null;
-                        
-                        // Update code di database jika ditemukan
+                        code = extractCode(result.subject || '') || extractCode(result.content || '') || null;
                         if (code) {
-                            await env.DB.prepare(`
-                                UPDATE emails SET code = ? WHERE id = ?
-                            `).bind(code, result.id).run();
+                            await env.DB.prepare(`UPDATE emails SET code = ? WHERE id = ?`).bind(code, result.id).run();
                         }
                     }
                     
@@ -232,18 +195,12 @@ export default {
                         has_code: !!code
                     }), { headers });
                 } else {
-                    return new Response(JSON.stringify({
-                        error: 'No email found for this address',
-                        email: email
-                    }), { status: 404, headers });
+                    return new Response(JSON.stringify({ error: 'No email found for this address', email: email }), { status: 404, headers });
                 }
             }
 
-            // ===== GET /api/code/latest/:email =====
             if (path.startsWith('/api/code/latest/') && method === 'GET') {
                 const email = decodeURIComponent(path.replace('/api/code/latest/', ''));
-                
-                // Cari email dengan kode yang belum digunakan
                 const result = await env.DB.prepare(`
                     SELECT id, email, subject, content, code, created_at, from_email
                     FROM emails 
@@ -253,11 +210,7 @@ export default {
                 `).bind(email).first();
                 
                 if (result) {
-                    // Tandai sebagai sudah digunakan
-                    await env.DB.prepare(`
-                        UPDATE emails SET used = 1 WHERE id = ?
-                    `).bind(result.id).run();
-                    
+                    await env.DB.prepare(`UPDATE emails SET used = 1 WHERE id = ?`).bind(result.id).run();
                     return new Response(JSON.stringify({
                         success: true,
                         code: result.code,
@@ -266,60 +219,31 @@ export default {
                         received_at: new Date(result.created_at).toISOString()
                     }), { headers });
                 } else {
-                    return new Response(JSON.stringify({
-                        success: false,
-                        message: 'No unused verification code found',
-                        email: email
-                    }), { status: 404, headers });
+                    return new Response(JSON.stringify({ success: false, message: 'No unused verification code found', email: email }), { status: 404, headers });
                 }
             }
 
-            // ===== DELETE /api/delete/:email =====
             if (path.startsWith('/api/delete/') && method === 'DELETE') {
                 const email = decodeURIComponent(path.replace('/api/delete/', ''));
-                const result = await env.DB.prepare(`
-                    DELETE FROM emails WHERE email = ?
-                `).bind(email).run();
-                
-                return new Response(JSON.stringify({
-                    success: true,
-                    message: `Deleted emails for ${email}`,
-                    deleted: result.meta.changes || 0
-                }), { headers });
+                const result = await env.DB.prepare(`DELETE FROM emails WHERE email = ?`).bind(email).run();
+                return new Response(JSON.stringify({ success: true, message: `Deleted emails for ${email}`, deleted: result.meta.changes || 0 }), { headers });
             }
 
-            // ===== POST /api/clear - Hapus semua email =====
             if (path === '/api/clear' && method === 'POST') {
-                // Hanya izinkan dari IP tertentu atau dengan secret key
                 const secret = url.searchParams.get('secret');
                 const ADMIN_SECRET = env.ADMIN_SECRET || 'admin123';
-                
                 if (secret !== ADMIN_SECRET) {
-                    return new Response(JSON.stringify({
-                        error: 'Unauthorized',
-                        message: 'Valid secret key required'
-                    }), { status: 401, headers });
+                    return new Response(JSON.stringify({ error: 'Unauthorized', message: 'Valid secret key required' }), { status: 401, headers });
                 }
-                
                 await env.DB.prepare(`DELETE FROM emails`).run();
-                return new Response(JSON.stringify({
-                    success: true,
-                    message: 'All emails cleared'
-                }), { headers });
+                return new Response(JSON.stringify({ success: true, message: 'All emails cleared' }), { headers });
             }
 
-            // ===== GET /api/stats =====
             if (path === '/api/stats' && method === 'GET') {
                 const total = await env.DB.prepare('SELECT COUNT(*) as count FROM emails').first();
-                const pending = await env.DB.prepare(
-                    'SELECT COUNT(*) as count FROM emails WHERE used = 0'
-                ).first();
-                const used = await env.DB.prepare(
-                    'SELECT COUNT(*) as count FROM emails WHERE used = 1'
-                ).first();
-                const withCode = await env.DB.prepare(
-                    'SELECT COUNT(*) as count FROM emails WHERE code IS NOT NULL'
-                ).first();
+                const pending = await env.DB.prepare('SELECT COUNT(*) as count FROM emails WHERE used = 0').first();
+                const used = await env.DB.prepare('SELECT COUNT(*) as count FROM emails WHERE used = 1').first();
+                const withCode = await env.DB.prepare('SELECT COUNT(*) as count FROM emails WHERE code IS NOT NULL').first();
                 
                 return new Response(JSON.stringify({
                     total: total.count,
@@ -331,49 +255,23 @@ export default {
                 }), { headers });
             }
 
-            // ==========================================
-            // 3. HANDLE EMAIL ROUTING (INCOMING EMAIL) 
-            // (Bagian ini TIDAK PERLU ADA LAGI, karena sudah di-handle oleh `async email` di atas)
-            // ==========================================
-            
-            // ==========================================
-            // 4. 404 - NOT FOUND
-            // ==========================================
             return new Response(JSON.stringify({
                 error: 'Not Found',
                 path: path,
                 method: method,
-                available_endpoints: [
-                    '/', '/api/domains', '/api/generate', 
-                    '/api/emails', '/api/email/:id', 
-                    '/api/code/:email', '/api/code/latest/:email',
-                    '/api/stats', '/api/delete/:email'
-                ]
+                available_endpoints: ['/', '/api/domains', '/api/generate', '/api/emails', '/api/email/:id', '/api/code/:email', '/api/code/latest/:email', '/api/stats', '/api/delete/:email']
             }), { status: 404, headers });
 
         } catch (error) {
             console.error('Error:', error);
-            return new Response(JSON.stringify({
-                error: 'Internal Server Error',
-                message: error.message,
-                stack: error.stack
-            }), { status: 500, headers });
+            return new Response(JSON.stringify({ error: 'Internal Server Error', message: error.message }), { status: 500, headers });
         }
     }
 };
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
+// Helper Functions
 function generateRandomName() {
-    const prefixes = [
-        'john', 'jane', 'alex', 'sarah', 'mike', 'emma', 'david', 'lisa', 
-        'tony', 'anna', 'brian', 'chris', 'diana', 'eric', 'fiona', 'george', 
-        'holly', 'ian', 'julia', 'kevin', 'laura', 'mark', 'nina', 'oscar', 
-        'paula', 'robert', 'susan', 'thomas', 'ursula', 'victor', 'william', 
-        'xena', 'yolanda', 'zach', 'amelia', 'benjamin', 'charlotte', 'daniel'
-    ];
+    const prefixes = ['john', 'jane', 'alex', 'sarah', 'mike', 'emma', 'david', 'lisa', 'tony', 'anna', 'brian', 'chris', 'diana', 'eric', 'fiona', 'george', 'holly', 'ian', 'julia', 'kevin', 'laura', 'mark', 'nina', 'oscar', 'paula', 'robert', 'susan', 'thomas', 'ursula', 'victor', 'william', 'xena', 'yolanda', 'zach', 'amelia', 'benjamin', 'charlotte', 'daniel'];
     const random = Math.floor(Math.random() * prefixes.length);
     const number = Math.floor(Math.random() * 9999);
     return `${prefixes[random]}${number}`;
@@ -381,7 +279,6 @@ function generateRandomName() {
 
 function extractCode(text) {
     if (!text) return null;
-    
     const patterns = [
         /verification code[:\s]*([A-Z0-9]{4,8})/i,
         /verification code[:\s]*(\d{4,8})/i,
@@ -396,30 +293,19 @@ function extractCode(text) {
         /(\b\d{5,8}\b)/,
         /(\b[A-Z]{5,8}\b)/
     ];
-    
     for (const pattern of patterns) {
         const match = text.match(pattern);
-        if (match) {
-            return match[1] || match[0];
-        }
+        if (match) return match[1] || match[0];
     }
-    
     return null;
 }
 
 async function cleanupOldEmails(env) {
     const cutoff = Date.now() - MAX_EMAIL_AGE;
-    await env.DB.prepare(`
-        DELETE FROM emails 
-        WHERE created_at < ? AND used = 1
-    `).bind(cutoff).run();
+    await env.DB.prepare(`DELETE FROM emails WHERE created_at < ? AND used = 1`).bind(cutoff).run();
 }
 
 async function countEmailsByIP(env, ip) {
-    const result = await env.DB.prepare(`
-        SELECT COUNT(*) as count 
-        FROM emails 
-        WHERE ip_address = ? AND created_at > ?
-    `).bind(ip, Date.now() - MAX_EMAIL_AGE).first();
+    const result = await env.DB.prepare(`SELECT COUNT(*) as count FROM emails WHERE ip_address = ? AND created_at > ?`).bind(ip, Date.now() - MAX_EMAIL_AGE).first();
     return result.count || 0;
 }
