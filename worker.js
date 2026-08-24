@@ -1,6 +1,6 @@
 // HAPUS BARIS IMPORT PostalMime, TIDAK PERLU LIBRARY
 
-const DOMAINS = ["gmaiil.xinquins.de5.net"];
+const DOMAINS = ["xinquins.de5.net"];
 const MAX_EMAIL_AGE = 3600000; // 1 jam (dalam milidetik)
 const MAX_EMAILS_PER_IP = 50; // Maksimal email per IP
 
