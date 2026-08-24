@@ -1,5 +1,5 @@
 // WAJIB: Import parser email di paling atas
-import { PostalMime } from 'postal-mime';
+import PostalMime from 'postal-mime';
 
 const DOMAINS = ["gmaiil.xinquins.de5.net"];
 const MAX_EMAIL_AGE = 3600000; // 1 jam (dalam milidetik)
