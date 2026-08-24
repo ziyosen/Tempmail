@@ -1,4 +1,4 @@
-// WAJIB: Import parser email di paling atas
+
 import PostalMime from 'postal-mime';
 
 const DOMAINS = ["gmaiil.xinquins.de5.net"];
