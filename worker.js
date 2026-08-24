@@ -1,10 +1,54 @@
-
+// WAJIB: Import parser email di paling atas
+import { PostalMime } from 'postal-mime';
 
 const DOMAINS = ["gmaiil.xinquins.de5.net"];
 const MAX_EMAIL_AGE = 3600000; // 1 jam (dalam milidetik)
 const MAX_EMAILS_PER_IP = 50; // Maksimal email per IP
 
 export default {
+    // ==========================================
+    // BAGIAN BARU: HANDLE EMAIL MASUK (WAJIB ADA)
+    // ==========================================
+    async email(message, env, ctx) {
+        try {
+            // Parse email mentah
+            const rawEmail = new Response(message.raw);
+            const parser = new PostalMime();
+            const email = await parser.parse(await rawEmail.arrayBuffer());
+
+            const to = email.to[0].address; // Alamat email kamu (contoh: john123@gmaiil...)
+            const from = email.from.address;
+            const subject = email.subject || '';
+            const content = email.html || email.text || '';
+
+            // Ekstrak kode verifikasi
+            const code = extractCode(content) || extractCode(subject);
+
+            // Simpan ke database D1 (pastikan binding DB kamu bernama 'DB')
+            await env.DB.prepare(`
+                INSERT INTO emails (id, email, from_email, subject, content, code, created_at, read, used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(
+                crypto.randomUUID(),
+                to,
+                from,
+                subject,
+                content,
+                code,
+                Date.now(),
+                0,
+                0
+            ).run();
+
+            console.log(`Email diterima dari ${from} ke ${to} | Kode: ${code}`);
+        } catch (e) {
+            console.error("Error parsing email:", e);
+        }
+    },
+
+    // ==========================================
+    // BAGIAN LAMA: FETCH API (JANGAN DIHAPUS)
+    // ==========================================
     async fetch(request, env) {
         const url = new URL(request.url);
         const path = url.pathname;
@@ -288,44 +332,10 @@ export default {
             }
 
             // ==========================================
-            // 3. HANDLE EMAIL ROUTING (INCOMING EMAIL)
+            // 3. HANDLE EMAIL ROUTING (INCOMING EMAIL) 
+            // (Bagian ini TIDAK PERLU ADA LAGI, karena sudah di-handle oleh `async email` di atas)
             // ==========================================
-            if (path === '/email' && method === 'POST') {
-                try {
-                    const formData = await request.formData();
-                    const to = formData.get('to');
-                    const from = formData.get('from');
-                    const subject = formData.get('subject') || '';
-                    const html = formData.get('html') || '';
-                    const plain = formData.get('plain') || '';
-                    
-                    // Ekstrak kode dari email
-                    const content = html || plain;
-                    const code = extractCode(content) || extractCode(subject);
-                    
-                    // Simpan ke database
-                    await env.DB.prepare(`
-                        INSERT INTO emails (id, email, from_email, subject, content, code, created_at, read, used)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    `).bind(
-                        crypto.randomUUID(),
-                        to,
-                        from,
-                        subject,
-                        content,
-                        code,
-                        Date.now(),
-                        0,
-                        0
-                    ).run();
-                    
-                    return new Response('OK', { status: 200 });
-                } catch (error) {
-                    console.error('Error processing email:', error);
-                    return new Response('Error processing email', { status: 500 });
-                }
-            }
-
+            
             // ==========================================
             // 4. 404 - NOT FOUND
             // ==========================================
